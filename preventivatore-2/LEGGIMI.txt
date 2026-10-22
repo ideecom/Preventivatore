@@ -1,0 +1,9 @@
+PREVENTIVATORE - come pubblicarlo su Netlify
+1. Carica questa cartella su un repository GitHub e collegalo a Netlify (Add new site > Import from Git).
+   Impostazioni di build: nessun comando, publish "public", functions "netlify/functions" (le legge da netlify.toml).
+2. In Netlify: Site configuration > Environment variables > crea APP_PASSWORD con la password per la rete vendite.
+3. Rilancia il deploy. Apri il sito, inserisci codice e quantita, aggiungi gli articoli e genera il PDF.
+
+Aggiornare il listino: python scripts/converti_listino.py LISTINO_GENERALE.xlsx  (serve pandas; per i file .xls anche xlrd), poi ripubblica.
+Diagnosi: apri nel browser  https://IL-TUO-SITO.netlify.app/.netlify/functions/prodotto?cod=GI6259431&qty=200&debug=1&pw=LA-TUA-PASSWORD
+e incolla il risultato a Claude. Il campo "versione" indica quale versione del file e' pubblicata (deve essere 4).

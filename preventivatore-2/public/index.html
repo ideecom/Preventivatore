@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preventivatore</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+:root{--ink:#16233a;--mute:#5d6b82;--line:#d5dbe6;--bg:#f3f5f9;--acc:#1f4b99;--err:#b3261e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+main{max-width:820px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:22px;margin:8px 0 18px}
+.box{background:#fff;border:1px solid var(--line);border-radius:6px;padding:14px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+label{display:flex;flex-direction:column;font-size:13px;color:var(--mute);gap:4px;flex:1;min-width:120px}
+input,textarea{font:inherit;color:var(--ink);padding:9px 10px;border:1px solid var(--line);border-radius:4px;background:#fff}
+input:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+button{font:inherit;font-weight:600;padding:10px 16px;border:0;border-radius:4px;background:var(--acc);color:#fff;cursor:pointer}
+button.sec{background:#fff;color:var(--ink);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:wait}
+#msg{min-height:22px;margin:8px 0 0;color:var(--err);font-weight:600}
+.item{display:flex;gap:12px;align-items:flex-start}
+.item img{width:84px;height:84px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:4px}
+.item .t{flex:1;min-width:0}.item .t small{color:var(--mute)}
+.num{text-align:right;white-space:nowrap}
+.tot{font-size:18px;font-weight:600;text-align:right}
+.var{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}.var img{width:28px;height:28px;border:1px solid var(--line)}
+.x{background:none;color:var(--mute);padding:2px 6px;font-weight:400}
+</style>
+</head>
+<body>
+<main>
+<h1>Preventivatore</h1>
+
+<div class="box">
+  <form id="f" class="row">
+    <label style="flex:2">Codice prodotto<input id="cod" autocomplete="off" required placeholder="es. GI7748"></label>
+    <label>Quantità<input id="qty" type="number" min="1" required inputmode="numeric"></label>
+    <button id="add">Aggiungi</button>
+  </form>
+  <div id="msg" role="alert"></div>
+</div>
+
+<div id="lista"></div>
+
+<div class="box" id="chiudi" hidden>
+  <div class="row">
+    <label>Cliente<input id="cliente"></label>
+    <label>Oggetto<input id="oggetto"></label>
+    <label style="max-width:120px">Ricarico %<input id="ric" type="number" min="0" step="0.1" value="0"></label>
+  </div>
+  <label style="margin-top:10px">Note e condizioni (compaiono a fine PDF)<textarea id="note" rows="2"></textarea></label>
+  <div class="tot" id="totale" style="margin:12px 0"></div>
+  <button id="pdf">Genera PDF</button>
+</div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const righe = [];
+const eur = (n) => '€ ' + n.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+const hdr = () => ({ 'x-pw': sessionStorage.pw || '' });
+const unit = (l) => Math.round(l.prezzo * (1 + (parseFloat($('ric').value) || 0) / 100) * 1000) / 1000;
+const tot = (l) => Math.round(unit(l) * l.qty * 100) / 100;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function api(path) {
+  for (;;) {
+    const r = await fetch('/.netlify/functions/' + path, { headers: hdr() });
+    if (r.status === 401) { const p = prompt('Password di accesso'); if (!p) throw new Error('Accesso necessario'); sessionStorage.pw = p; continue; }
+    return r;
+  }
+}
+async function foto(u, max = 700) {
+  try {
+    const r = await api('img?u=' + encodeURIComponent(u)); if (!r.ok) return null;
+    const bmp = await createImageBitmap(await r.blob());
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+    return { d: c.toDataURL('image/jpeg', .82), w: c.width, h: c.height };
+  } catch { return null; }
+}
+
+$('f').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('msg').textContent = ''; $('add').disabled = true;
+  try {
+    const r = await api(`prodotto?cod=${encodeURIComponent($('cod').value)}&qty=${$('qty').value}`);
+    const p = await r.json();
+    if (!r.ok) { $('msg').textContent = p.error || 'Errore'; return; }
+    const [main, ...vs] = await Promise.all([p.principale, ...p.varianti].map((u) => foto(u, u === p.principale ? 700 : 160)));
+    righe.push({ ...p, main, vs: vs.filter(Boolean) });
+    $('cod').value = ''; $('cod').focus(); draw();
+  } catch (err) { $('msg').textContent = err.message; }
+  finally { $('add').disabled = false; }
+});
+$('ric').addEventListener('input', draw);
+
+function draw() {
+  $('lista').innerHTML = righe.map((l, i) => `<div class="box item">
+    ${l.main ? `<img src="${l.main.d}" alt="">` : '<img alt="">'}
+    <div class="t"><b>${esc(l.nome)}</b><br><small>${esc(l.cod)}</small>
+      <div class="var">${l.vs.map((v) => `<img src="${v.d}" alt="">`).join('')}</div></div>
+    <div class="num">${l.qty} pz<br>${eur(unit(l))}<br><b>${eur(tot(l))}</b><br><small>scaglione ${l.scaglione}</small></div>
+    <button class="x" data-i="${i}" aria-label="Rimuovi">✕</button></div>`).join('');
+  $('chiudi').hidden = !righe.length;
+  $('totale').textContent = 'Totale ' + eur(righe.reduce((s, l) => s + tot(l), 0));
+}
+$('lista').addEventListener('click', (e) => { const i = e.target.dataset.i; if (i !== undefined) { righe.splice(+i, 1); draw(); } });
+
+// jsPDF con font standard accetta solo caratteri Latin-1/€: gli altri rompono la spaziatura dell'intera riga
+const pul = (s) => String(s || '').normalize('NFC').replace(/[\u2018\u2019\u00b4]/g, "'").replace(/[\u201c\u201d]/g, '"')
+  .replace(/[\u2013\u2014]/g, '-').replace(/\u00a0/g, ' ').replace(/[^\x20-\x7e\xa1-\xff\u20ac\n]/g, '');
+function fit(d, im, x, y, bw, bh) {
+  const k = Math.min(bw / im.w, bh / im.h), w = im.w * k, h = im.h * k;
+  d.addImage(im.d, 'JPEG', x + (bw - w) / 2, y + (bh - h) / 2, w, h);
+}
+$('pdf').addEventListener('click', () => {
+  const d = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' }), W = 210, M = 15;
+  let y = M + 6;
+  d.setFont('helvetica', 'bold'); d.setFontSize(20); d.text('Preventivo', M, y);
+  d.setFont('helvetica', 'normal'); d.setFontSize(10); d.text(new Date().toLocaleDateString('it-IT'), W - M, y, { align: 'right' });
+  y += 9;
+  if ($('cliente').value) { d.text(pul('Cliente: ' + $('cliente').value), M, y); y += 5; }
+  if ($('oggetto').value) { d.text(pul('Oggetto: ' + $('oggetto').value), M, y); y += 5; }
+  y += 4;
+  for (const l of righe) {
+    const testo = d.splitTextToSize(pul([l.descrizione, ...l.specifiche].filter(Boolean).join('\n')), W - 2 * M - 58).slice(0, 11);
+    const alt = Math.max(46, 14 + testo.length * 4.2) + (l.vs.length ? 20 : 0) + 10;
+    if (y + alt > 285) { d.addPage(); y = M; }
+    d.setDrawColor(213, 219, 230); d.line(M, y, W - M, y); y += 4;
+    if (l.main) fit(d, l.main, M, y, 50, 46);
+    d.setFont('helvetica', 'bold'); d.setFontSize(11); d.text(d.splitTextToSize(pul(l.nome), W - 2 * M - 58).slice(0, 2), M + 56, y + 4);
+    d.setFont('helvetica', 'normal'); d.setFontSize(8); d.setTextColor(110); d.text('Codice ' + l.cod, M + 56, y + 13);
+    d.setTextColor(30); d.setFontSize(9); d.text(testo, M + 56, y + 18);
+    let yy = y + Math.max(50, 22 + testo.length * 4.2);
+    if (l.vs.length) { l.vs.slice(0, 10).forEach((v, i) => fit(d, v, M + i * 18, yy, 16, 16)); yy += 19; }
+    d.setFontSize(10); d.setFont('helvetica', 'bold');
+    d.text(`${l.qty} pz   ${eur(unit(l))} cad.   Totale ${eur(tot(l))}`, W - M, yy + 2, { align: 'right' });
+    y = yy + 8;
+  }
+  if (y > 262) { d.addPage(); y = M; }
+  d.setFontSize(13); d.text('Totale ' + eur(righe.reduce((s, l) => s + tot(l), 0)), W - M, y + 6, { align: 'right' });
+  if ($('note').value) { d.setFont('helvetica', 'normal'); d.setFontSize(9); d.text(d.splitTextToSize(pul($('note').value), W - 2 * M), M, y + 16); }
+  d.save('preventivo' + ($('cliente').value ? '-' + $('cliente').value.replace(/[^\w]+/g, '_') : '') + '.pdf');
+});
+</script>
+</body>
+</html>
